@@ -1,0 +1,288 @@
+:root {
+  --bg: #f4f6f5;
+  --card: #fff;
+  --text: #14201a;
+  --muted: #5d6b63;
+  --line: #dce3df;
+  --accent: #1db954;
+  --accent-t: #06260f;
+  --bad: #d64545;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1411;
+    --card: #18211c;
+    --text: #eaf2ed;
+    --muted: #97a79d;
+    --line: #2a3830;
+    --bad: #ff6b6b;
+    color-scheme: dark;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    16px/1.5 system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+}
+main {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 20px 16px 40px;
+}
+h1 {
+  font-size: 28px;
+  margin: 8px 0 4px;
+}
+h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+p.sub {
+  color: var(--muted);
+  margin: 0 0 20px;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 18px;
+  margin-bottom: 14px;
+}
+label {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+  margin: 12px 0 4px;
+}
+input[type="text"] {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 16px;
+}
+input:focus {
+  outline: 2px solid var(--accent);
+  border-color: transparent;
+}
+button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--text);
+  padding: 11px 18px;
+}
+button.main {
+  background: var(--accent);
+  color: var(--accent-t);
+  border-color: var(--accent);
+  font-weight: 700;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.seg button {
+  padding: 8px 14px;
+}
+.seg button.on {
+  background: var(--accent);
+  color: var(--accent-t);
+  border-color: var(--accent);
+  font-weight: 700;
+}
+.score {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.p {
+  border: 2px solid var(--line);
+  border-radius: 14px;
+  padding: 8px 10px;
+  background: var(--card);
+}
+.p.on {
+  border-color: var(--c);
+}
+.p b {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.p span {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--c);
+}
+.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--c);
+  margin-right: 6px;
+}
+.bar {
+  height: 8px;
+  border-radius: 99px;
+  background: var(--line);
+  overflow: hidden;
+  margin: 14px 0;
+}
+.bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+}
+.play {
+  width: 100%;
+  padding: 18px;
+  font-size: 18px;
+}
+.msg {
+  padding: 12px;
+  border-radius: 12px;
+  margin: 10px 0;
+  font-weight: 600;
+}
+.msg.ok {
+  background: rgba(29, 185, 84, 0.15);
+}
+.msg.no {
+  background: rgba(214, 69, 69, 0.15);
+  color: var(--bad);
+}
+.got {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+.chip {
+  padding: 4px 12px;
+  border-radius: 99px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  font-size: 14px;
+}
+.chip.y {
+  background: rgba(29, 185, 84, 0.15);
+  border-color: var(--accent);
+}
+.rev {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  margin-top: 10px;
+}
+.rev img {
+  width: 84px;
+  height: 84px;
+  border-radius: 10px;
+}
+.rank {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+a {
+  color: var(--accent);
+}
+.vbox {
+  position: relative;
+  aspect-ratio: 16/9;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  margin: 6px 0 12px;
+}
+.stage {
+  position: absolute;
+  z-index: 5;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+  width: 640px;
+  height: 360px;
+}
+.stage.away {
+  left: -10000px !important;
+  top: 0 !important;
+}
+.stage .crop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+/* El iframe es más alto que el recuadro: el título de YouTube (arriba) y el logo (abajo) quedan fuera de la vista */
+.stage iframe {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  top: -60px;
+  height: calc(100% + 120px);
+  border: 0;
+  pointer-events: none;
+}
+.stage .shield {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+.ythelp {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 6px 2px 0;
+  line-height: 1.5;
+}
+.ythelp ol {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+.vcover {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: #000;
+  color: #fff;
+  font-size: 15px;
+  text-align: center;
+  padding: 12px;
+}
+.vcover b {
+  font-size: 40px;
+  line-height: 1;
+}
+.vcover.off {
+  display: none;
+}

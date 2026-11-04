@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>MediaIQ</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main id="app"></main>
+    <script type="module">
+           import { CATS, GEN_ES } from "./js/pools/music.js";
+           import { MCATS, MOVIES } from "./js/pools/movies.js";
+           import { loadCat, refineYear } from "./js/itunes.js";
+           import { norm, shuffle } from "./js/utils.js";
+           import {
+             nextMovie,
+             dropScene,
+             loadYT,
+             ensurePlayer,
+             placeStage,
+             pauseVideo,
+             sceneOff,
+             yt,
+             ytPlaying,
+           } from "./js/youtube.js";
+
+           const COL = ["#1db954", "#e8590c", "#4c6ef5", "#d6336c"];
+
+           const $ = (s) => document.getElementById(s),
+             app = $("app");
+           const esc = (s) =>
+             String(s).replace(
+               /[&<>"]/g,
+               (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c],
+             );
+           function lev(a, b) {
+             const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+             for (let j = 1; j <= b.length; j++) d[0][j] = j;
+             for (let i = 1; i <= a.length; i++)
+               for (let j = 1; j <= b.length; j++)
+                 d[i][j] = Math.min(
+                   d[i - 1][j] + 1,
+                   d[i][j - 1] + 1,
+                   d[i - 1][j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1),
+                 );
+             return d[a.length][b.length];
+           }
+           const close = (g, t) => {
+             g = norm(g);
+             t = norm(t);
+             return g.length > 1 && lev(g, t) <= Math.floor(t.length / 6);
+           };
+           const artistMatch = (g, a) => {
+             const ng = norm(g);
+             if (ng.length < 3) return false;
+             return (
+               a
+                 .split(/,|&|\bfeat\.?\b|\bft\.?\b|\band\b/i)
+                 .some((p) => p.trim() && close(g, p.trim())) ||
+               (ng.length >= 4 && norm(a).includes(ng))
+             );
+           };
+
+           let actx,
+             srcN,
+             cache = {};
+           let cfg = {
+               mode: "music",
+               n: 2,
+               rounds: 3,
+               clip: 10,
+               names: ["", "", "", ""],
+             },
+             G,
+             audio = null,
+             tick = null;
+
+           const genreES = (g) => GEN_ES[g] || g;
+           const MOV_MODE = () => cfg.mode == "movies";
+           const cats = () => (MOV_MODE() ? MOVIES : CATS);
+           const itemLbl = () => (MOV_MODE() ? "Película" : "Canción");
+           const hardIco = () => (MOV_MODE() ? "🙈" : "🎼");
+           const hardRep = () =>
+             MOV_MODE() ? "🙈 Repetir solo audio" : "🎼 Repetir instrumental";
+           const matchTitle = (v, s) =>
+             [s.title, ...(s.alts || [])].some((t) => close(v, t));
+           const matchWho = (v, s) =>
+             (s.actors || [s.artist]).some((a) => artistMatch(v, a));
+
+           // ===== Películas: conexión entre el reproductor de YouTube (js/youtube.js) y la partida =====
+           function movStatus(t) {
+             const e = $("movstatus");
+             if (e) e.textContent = t;
+           }
+           // Coloca el reproductor encima del recuadro #vbox cada vez que cambia la pantalla
+           function syncStage() {
+             if (placeStage(MOV_MODE() ? $("vbox") : null)) cover();
+           }
+           new MutationObserver(syncStage).observe(app, { childList: true });
+           addEventListener("resize", syncStage);
+           const playerEvents = {
+             onChange: () => cover(),
+             onEnded: () => {
+               if (G && G.vplay) done();
+             },
+             onError: (code) => ytError(code),
+           };
+           function cueScene(s) {
+             const v = s.vids[0];
+             G.off = sceneOff(v.dur, cfg.clip);
+             G.vid = v.id;
+             yt.cueVideoById({ videoId: v.id, startSeconds: G.off });
+           }
+           function cover() {
+             const c = $("vcover");
+             if (!c || !G) return;
+             const hide = G.vplay && ytPlaying && !G.inst && !G.done;
+             c.classList.toggle("off", hide);
+             c.innerHTML =
+               G.vplay && G.inst
+                 ? "<b>🙈</b>Solo audio"
+                 : G.vplay
+                   ? "<b>⏳</b>Cargando escena…"
+                   : G.plays
+                     ? "<b>🎬</b>Fragmento terminado"
+                     : "<b>🎬</b>Pulsa para ver el fragmento";
+           }
+           function ytError(code) {
+             if (!G || !G.song || !MOV_MODE()) return;
+             const s = G.song,
+               wasPlaying = G.vplay;
+             if (code == 153 || code == 152) {
+               stop();
+               G.vplay = false;
+               app.innerHTML = `<h1>YouTube bloqueó el reproductor</h1><p class="sub">YouTube no reproduce videos cuando el juego se abre como archivo local (la dirección empieza por <code>file://</code>). Ábrelo desde un servidor web: por ejemplo, súbelo a GitHub Pages o Netlify, o en la carpeta del archivo ejecuta <code>python -m http.server</code> y abre <code>http://localhost:8000</code>.</p><button class="main" id="b">Volver a los ajustes</button>`;
+               $("b").onclick = setup;
+               return;
+             }
+             // Video no disponible o no insertable: probar otra escena de la misma película
+             dropScene(s, G.vid);
+             if (s.vids.length) {
+               cueScene(s);
+               if (wasPlaying) yt.playVideo();
+               return;
+             }
+             // Ninguna escena funcionó: buscar otra película del mismo género sin gastar el turno
+             stop();
+             const pl = G.turn % cfg.n,
+               cat = G.catKey;
+             G.used[pl] = G.used[pl].filter((k) => k != cat);
+             newTurn();
+             choose(cat);
+           }
+           function playScene() {
+             clearInterval(tick);
+             if (G.plays > 1) yt.seekTo(G.off, true);
+             yt.playVideo();
+             G.vplay = true;
+             cover();
+             busy();
+             tick = setInterval(() => {
+               if (!ytPlaying) return;
+               const t = yt.getCurrentTime() - G.off;
+               bar(t / cfg.clip);
+               if (t >= cfg.clip) done();
+             }, 100);
+           }
+
+           function setup() {
+             stop();
+             const mv = MOV_MODE();
+             if (mv && cfg.clip < 10) cfg.clip = 10;
+             app.innerHTML = `<h1>${mv ? "🎬 Duelo de Cine" : "🎧 Duelo Musical"}</h1>
+      <div class="row seg" id="md" style="margin-bottom:12px"><button data-m="music" class="${mv ? "" : "on"}">🎵 Canciones</button><button data-m="movies" class="${mv ? "on" : ""}">🎬 Películas</button></div>
+      <p class="sub">${
+        mv
+          ? "En tu turno, elige un género (cada jugador puede usar cada género solo una vez), mira un fragmento de una escena y adivina la película, el año de estreno y el actor o actriz principal. Título = 3 pts, actor/actriz = 2 pts, año = hasta 3 pts. Si usas la pista, los puntos de ese turno se reducen a la mitad."
+          : "En tu turno, elige un género (cada jugador puede usar cada género solo una vez), escucha un fragmento y adivina la canción, el artista y el año. Título = 3 pts, artista = 2 pts, año = hasta 3 pts. Si usas la pista, los puntos de ese turno se reducen a la mitad."
+      }</p>
+      <div class="card"><h2>Jugadores</h2><div class="row seg" id="np">${[2, 3, 4].map((n) => `<button data-n="${n}" class="${cfg.n == n ? "on" : ""}">${n} jugadores</button>`).join("")}</div>
+      ${[0, 1, 2, 3]
+        .slice(0, cfg.n)
+        .map(
+          (i) =>
+            `<label><span class="dot" style="--c:${COL[i]}"></span>Jugador ${i + 1}</label><input type="text" maxlength="14" data-i="${i}" placeholder="Jugador ${i + 1}" value="${esc(cfg.names[i])}">`,
+        )
+        .join("")}</div>
+      <div class="card"><h2>Ajustes</h2>
+      <label>Duración del fragmento</label><div class="row seg" id="cl">${(mv ? [10, 15] : [5, 10, 15]).map((n) => `<button data-c="${n}" class="${cfg.clip == n ? "on" : ""}">${n} seg</button>`).join("")}</div>
+      <label>Turnos por jugador</label><div class="row seg" id="rd">${[2, 3, 5, "all"].map((n) => `<button data-r="${n}" class="${cfg.rounds == n ? "on" : ""}">${n == "all" ? "Uno por género (" + Object.keys(cats()).length + ")" : n}</button>`).join("")}</div></div>
+      ${
+        mv
+          ? `${location.protocol == "file:" ? `<div class="msg no" style="margin-top:10px">⚠️ Abriste el juego como archivo local. YouTube no reproduce videos así: ábrelo desde un servidor web (GitHub Pages, Netlify, o <code>python -m http.server</code> en la carpeta del archivo).</div>` : ""}`
+          : ""
+      }
+      <button class="main" id="go" style="width:100%">Empezar partida</button>`;
+             const bind = (id, attr, key) =>
+               ($(id).onclick = (e) => {
+                 const v = e.target.dataset[attr];
+                 if (v) {
+                   save();
+                   cfg[key] = isNaN(v) ? v : +v;
+                   setup();
+                 }
+               });
+             bind("md", "m", "mode");
+             bind("np", "n", "n");
+             bind("cl", "c", "clip");
+             bind("rd", "r", "rounds");
+             $("go").onclick = () => {
+               save();
+               start();
+             };
+           }
+           function save() {
+             app
+               .querySelectorAll("input[data-i]")
+               .forEach((i) => (cfg.names[i.dataset.i] = i.value.trim()));
+           }
+
+           function start() {
+             const names = [...Array(cfg.n)].map(
+               (_, i) => cfg.names[i] || "Jugador " + (i + 1),
+             );
+             G = {
+               names,
+               scores: names.map(() => 0),
+               turn: 0,
+               total:
+                 cfg.n *
+                 (cfg.rounds == "all" ? Object.keys(cats()).length : cfg.rounds),
+               used: names.map(() => []),
+               pool: {},
+             };
+             newTurn();
+             play();
+           }
+           function scoreboard(pl) {
+             return `<div class="score">${G.names.map((n, i) => `<div class="p ${i == pl ? "on" : ""}" style="--c:${COL[i]}"><b>${esc(n)}</b><span>${G.scores[i]}</span></div>`).join("")}</div>`;
+           }
+           function pickScreen() {
+             const pl = G.turn % cfg.n,
+               used = G.used[pl];
+             app.innerHTML =
+               scoreboard(pl) +
+               `<div class="card"><div class="row" style="justify-content:space-between"><h2><span class="dot" style="--c:${COL[pl]}"></span>${esc(G.names[pl])}, elige un género</h2><small style="color:var(--muted)">${itemLbl()} ${G.turn + 1} de ${G.total}</small></div>
+      <p class="sub" style="margin:0 0 12px">Solo puedes usar cada género una vez, así que elige bien.</p>
+      <div style="display:grid;gap:8px">${Object.entries(cats())
+        .map(
+          ([k, v]) =>
+            `<button class="main" data-k="${k}" ${used.includes(k) ? "disabled" : ""} style="${used.includes(k) ? "" : "padding:14px"}">${v.n}${used.includes(k) ? " · usado ✓" : ""}</button>`,
+        )
+        .join("")}</div></div>`;
+             app
+               .querySelectorAll("button[data-k]")
+               .forEach((b) => (b.onclick = () => choose(b.dataset.k)));
+           }
+           async function choose(cat) {
+             const pl = G.turn % cfg.n;
+             app.innerHTML = `<h1>Cargando ${esc(cats()[cat].n)}…</h1><p class="sub" id="movstatus">${MOV_MODE() ? "Buscando una escena en YouTube." : "Buscando fragmentos en el catálogo de Apple Music."}</p>`;
+             try {
+               if (MOV_MODE()) {
+                 if (!G.pool[cat]) G.pool[cat] = shuffle(MOVIES[cat].m);
+                 G.song = await nextMovie(G.pool[cat], cat, movStatus);
+                 movStatus("Preparando el reproductor…");
+                 await loadYT();
+                 await ensurePlayer(playerEvents);
+                 cueScene(G.song);
+               } else {
+                 if (!G.pool[cat] || !G.pool[cat].length)
+                   G.pool[cat] = await loadCat(cat);
+                 G.song = G.pool[cat].shift();
+                 await refineYear(G.song);
+               }
+               G.catName = cats()[cat].n;
+               G.catKey = cat;
+               G.used[pl].push(cat);
+               play();
+             } catch (e) {
+               app.innerHTML = `<h1>No se pudo cargar ${MOV_MODE() ? "la película" : "las canciones"}</h1><p class="sub">${MOV_MODE() ? "" : "Revisa tu conexión a internet y vuelve a intentarlo. "}(${esc(e.message)})</p><div class="row"><button class="main" id="r">Reintentar</button><button id="b">Elegir otro género</button></div>`;
+               $("r").onclick = () => choose(cat);
+               $("b").onclick = pickScreen;
+             }
+           }
+           const pattern = (t) =>
+             t
+               .split(" ")
+               .map((w) =>
+                 [...w].map((c) => (/\p{L}|\d/u.test(c) ? "_" : c)).join(" "),
+               )
+               .join("   ");
+           const half = (g) => Math.ceil(g * (G.inst ? 2 : 1) * (G.clue ? 0.5 : 1));
+           function newTurn() {
+             Object.assign(G, {
+               song: null,
+               gT: false,
+               gA: false,
+               gY: false,
+               clue: false,
+               inst: false,
+               wrong: 0,
+               plays: 0,
+               done: false,
+               msg: "",
+               ok: false,
+               vplay: false,
+               off: MOV_MODE() ? null : (Math.random() * (30 - cfg.clip - 2)) | 0,
+             });
+           }
+           function stop() {
+             if (srcN) {
+               try {
+                 srcN.stop();
+               } catch (e) {}
+               srcN = null;
+             }
+             if (audio) {
+               audio.pause();
+               audio = null;
+             }
+             pauseVideo();
+             if (G) G.vplay = false;
+             cover();
+             clearInterval(tick);
+             const b = document.querySelector(".bar i");
+             if (b) b.style.width = "0";
+           }
+
+           function bar(p) {
+             const b = document.querySelector(".bar i");
+             if (b) b.style.width = Math.max(0, Math.min(1, p)) * 100 + "%";
+           }
+           function busy() {
+             document.querySelectorAll(".play").forEach((b) => {
+               b.disabled = true;
+               b.textContent = MOV_MODE() ? "▶ Reproduciendo…" : "🔊 Sonando…";
+             });
+           }
+           function done() {
+             stop();
+             const pl = $("pl"),
+               pi = $("pli");
+             if (pi) pi.remove();
+             if (pl) {
+               pl.disabled = G.plays >= 3;
+               pl.style.flex = "";
+               pl.textContent =
+                 (G.inst ? hardRep() : "▶ Repetir") + ` (quedan ${3 - G.plays})`;
+             }
+           }
+           function playNormal(s) {
+             audio = new Audio(s.url);
+             const a = audio,
+               off = G.off;
+             const go = () => {
+               a.currentTime = off;
+               a.play().catch(() => {});
+             };
+             a.readyState < 1
+               ? a.addEventListener("loadedmetadata", go, { once: true })
+               : go();
+             tick = setInterval(() => {
+               bar((a.currentTime - off) / cfg.clip);
+               if (a.currentTime - off >= cfg.clip || a.ended) done();
+             }, 100);
+             busy();
+           }
+           async function instBuf(s) {
+             if (cache[s.url]) return cache[s.url];
+             actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+             const ab = await (await fetch(s.url)).arrayBuffer(),
+               b = await actx.decodeAudioData(ab);
+             if (b.numberOfChannels < 2) throw new Error("mono");
+             const L = b.getChannelData(0),
+               R = b.getChannelData(1),
+               n = b.length,
+               o = actx.createBuffer(1, n, b.sampleRate),
+               d = o.getChannelData(0);
+             const k = 1 - Math.exp((-2 * Math.PI * 150) / b.sampleRate);
+             let lp = 0,
+               e = 0;
+             for (let i = 0; i < n; i++) {
+               const mid = (L[i] + R[i]) / 2;
+               lp += k * (mid - lp);
+               d[i] = (L[i] - R[i]) * 0.9 + lp;
+               e += d[i] * d[i];
+             }
+             if (Math.sqrt(e / n) < 0.003) throw new Error("silent");
+             return (cache[s.url] = o);
+           }
+           async function playClip() {
+             const s = G.song;
+             stop();
+             G.plays++;
+             if (MOV_MODE()) {
+               playScene();
+               return;
+             }
+             if (!G.inst) {
+               playNormal(s);
+               return;
+             }
+             actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+             actx.resume();
+             document.querySelectorAll(".play").forEach((b) => {
+               b.disabled = true;
+               b.textContent = "Quitando la voz…";
+             });
+             try {
+               const buf = await instBuf(s);
+               if (actx.state == "suspended") await actx.resume();
+               srcN = actx.createBufferSource();
+               srcN.buffer = buf;
+               srcN.connect(actx.destination);
+               const t0 = actx.currentTime;
+               srcN.start(0, G.off, cfg.clip);
+               busy();
+               tick = setInterval(() => {
+                 bar((actx.currentTime - t0) / cfg.clip);
+                 if (actx.currentTime - t0 >= cfg.clip) done();
+               }, 100);
+             } catch (err) {
+               G.inst = false;
+               G.ok = false;
+               G.msg =
+                 "No se pudo quitar la voz de esta canción (limitación del navegador o grabación mono), así que suena normal y sin el bono ×2.";
+               play();
+               playNormal(s);
+             }
+           }
+
+           function play() {
+             if (G.turn >= G.total) return end();
+             if (!G.song) return pickScreen();
+             const s = G.song,
+               pl = G.turn % cfg.n;
+             let h = `<div class="score">${G.names.map((n, i) => `<div class="p ${i == pl ? "on" : ""}" style="--c:${COL[i]}"><b>${esc(n)}</b><span>${G.scores[i]}</span></div>`).join("")}</div>
+      <div class="card"><div class="row" style="justify-content:space-between"><h2><span class="dot" style="--c:${COL[pl]}"></span>Turno de ${esc(G.names[pl])}</h2><small style="color:var(--muted)">${esc(G.catName)} · ${itemLbl()} ${G.turn + 1} de ${G.total}</small></div>
+      ${G.inst ? `<div class="chip y" style="display:inline-block;margin-bottom:6px">${MOV_MODE() ? "🙈 Modo solo audio ×2" : "🎼 Modo instrumental ×2"}</div>` : ""}<div class="got"><span class="chip ${G.gT ? "y" : ""}">Título: ${G.gT ? esc(s.title) : "?"}</span><span class="chip ${G.gA ? "y" : ""}">${MOV_MODE() ? "Actor/actriz" : "Artista"}: ${G.gA ? esc(s.artist) : "?"}</span>${s.year ? `<span class="chip ${G.gY ? "y" : ""}">Año: ${G.gY ? s.year : "?"}</span>` : ""}</div>`;
+             if (G.clue)
+               h += `<div class="msg ok" style="font-weight:500">💡 <b>Pista (mitad de puntos):</b> ${s.genre ? esc(genreES(s.genre)) + " · " : ""}${s.director ? "Dirección: " + esc(s.director) + " · " : ""}${s.year ? "Década de " + Math.floor(s.year / 10) * 10 + " · " : ""}<span style="font-family:ui-monospace,monospace;letter-spacing:2px">${pattern(s.title)}</span></div>`;
+             if (!G.done) {
+               if (MOV_MODE()) h += `<div class="vbox" id="vbox"></div>`;
+               h += G.plays
+                 ? `<button class="main play" id="pl" ${G.plays >= 3 ? "disabled" : ""}>${G.inst ? hardRep() : "▶ Repetir"} (quedan ${3 - G.plays})</button>`
+                 : `<div class="row"><button class="main play" id="pl" style="flex:1">${MOV_MODE() ? "▶ Ver fragmento" : "▶ Escuchar fragmento"}</button><button class="play" id="pli" style="flex:1;padding:18px;font-size:18px;border-color:var(--accent)">${MOV_MODE() ? "🙈 Solo audio ×2 pts" : "🎼 Instrumental ×2 pts"}</button></div><p style="color:var(--muted);font-size:13px;margin:6px 2px 0">${MOV_MODE() ? "Elige solo audio para ganar el doble de puntos: escucharás el fragmento sin ver la imagen." : "Elige instrumental para ganar el doble de puntos en esta canción. La voz se quita solo de forma aproximada."}</p>`;
+               h += `<div class="bar"><i></i></div>`;
+             }
+             if (G.msg) h += `<div class="msg ${G.ok ? "ok" : "no"}">${G.msg}</div>`;
+             if (G.done) {
+               h += `<div class="rev">${MOV_MODE() && G.vid ? `<img src="https://i.ytimg.com/vi/${esc(G.vid)}/mqdefault.jpg" alt="" style="object-fit:cover">` : s.art ? `<img src="${esc(s.art)}" alt="">` : ""}<div><b>${esc(s.title)}</b>${s.alts && s.alts.length ? ` <span style="color:var(--muted)">(${esc(s.alts[0])})</span>` : ""}<br>${esc(s.artist)}${s.year ? " · " + s.year : ""}<br>${
+                 MOV_MODE()
+                   ? `${G.vid ? `<a href="https://www.youtube.com/watch?v=${esc(G.vid)}&t=${G.off | 0}s" target="_blank" rel="noopener">Escena en YouTube ↗</a> · ` : ""}<a href="https://www.imdb.com/find/?q=${encodeURIComponent(s.title + " " + s.year)}" target="_blank" rel="noopener">IMDb ↗</a>`
+                   : `<a href="https://open.spotify.com/search/${encodeURIComponent(s.title + " " + s.artist)}" target="_blank" rel="noopener">Spotify ↗</a>${s.link ? ` · <a href="${esc(s.link)}" target="_blank" rel="noopener">Apple Music ↗</a>` : ""}`
+               }</div></div>
+       <button class="main" id="next" style="width:100%;margin-top:14px">${G.turn + 1 >= G.total ? "Ver resultados" : MOV_MODE() ? "Siguiente película" : "Siguiente canción"}</button>`;
+             } else {
+               h += `<div class="row"><input type="text" id="g" placeholder="${MOV_MODE() ? "Título, actor/actriz o año" : "Título, artista o año"} (ej. 1998)…" autocomplete="off" style="flex:1;min-width:160px"><button class="main" id="sub">Adivinar</button></div>
+       <div class="row" style="margin-top:10px"><span style="color:var(--muted);font-size:14px">Año: exacto 3 pts, ±1 = 2, ±2 = 1 · Fallos: ${G.wrong}/3</span><span style="flex:1"></span><button id="clue" ${G.clue ? "disabled" : ""}>💡 Pista (½ puntos)</button><button id="giveup">Revelar</button></div>`;
+             }
+             app.innerHTML = h + "</div>";
+             if (G.done) {
+               $("next").onclick = () => {
+                 stop();
+                 G.turn++;
+                 newTurn();
+                 play();
+               };
+               return;
+             }
+             $("pl").onclick = () => {
+               if (!G.plays) G.inst = false;
+               playClip();
+             };
+             if ($("pli"))
+               $("pli").onclick = () => {
+                 G.inst = true;
+                 playClip();
+               };
+             const inp = $("g"),
+               guess = () => {
+                 const v = inp.value.trim();
+                 if (!v) return;
+                 let gain = 0;
+                 if (s.year && /^(19|20)\d{2}$/.test(v)) {
+                   if (G.gY) {
+                     G.ok = false;
+                     G.msg = "Ya adivinaste el año.";
+                     play();
+                     return;
+                   }
+                   const d = Math.abs(+v - +s.year);
+                   G.gY = true;
+                   gain = half(d == 0 ? 3 : d == 1 ? 2 : d == 2 ? 1 : 0);
+                   G.scores[pl] += gain;
+                   G.ok = gain > 0;
+                   G.msg = gain
+                     ? `📅 ${d == 0 ? "¡Año exacto!" : "Te equivocaste por " + d + (d > 1 ? " años" : " año") + "."} +${gain} punto${gain > 1 ? "s" : ""}`
+                     : `📅 Te equivocaste por ${d} años — sin puntos.`;
+                   if (G.gT && G.gA && G.gY) {
+                     G.done = true;
+                     stop();
+                   }
+                   play();
+                   return;
+                 }
+                 if (!G.gT && matchTitle(v, s)) {
+                   G.gT = true;
+                   gain = 3;
+                 } else if (!G.gA && matchWho(v, s)) {
+                   G.gA = true;
+                   gain = 2;
+                 }
+                 gain = half(gain);
+                 if (gain) {
+                   G.scores[pl] += gain;
+                   G.ok = true;
+                   G.msg =
+                     `🎉 ¡+${gain} puntos!` +
+                     (G.gT && G.gA ? "" : " Sigue con lo que falta.");
+                 } else {
+                   G.wrong++;
+                   G.ok = false;
+                   G.msg = `“${esc(v)}” no es correcto.`;
+                 }
+                 if ((G.gT && G.gA && (G.gY || !s.year)) || G.wrong >= 3) {
+                   G.done = true;
+                   stop();
+                 }
+                 play();
+               };
+             $("sub").onclick = guess;
+             inp.onkeydown = (e) => {
+               if (e.key == "Enter") guess();
+             };
+             $("clue").onclick = () => {
+               G.clue = true;
+               play();
+             };
+             $("giveup").onclick = () => {
+               G.done = true;
+               G.ok = false;
+               G.msg = "Respuesta revelada.";
+               stop();
+               play();
+             };
+             if (G.plays && ((audio && !audio.paused) || G.vplay)) {
+               $("pl").disabled = true;
+               $("pl").textContent = MOV_MODE() ? "▶ Reproduciendo…" : "🔊 Sonando…";
+             }
+           }
+           function end() {
+             stop();
+             const r = G.names
+                 .map((n, i) => ({ n, s: G.scores[i], i }))
+                 .sort((a, b) => b.s - a.s),
+               w = r.filter((x) => x.s == r[0].s);
+             app.innerHTML = `<h1>🏆 ${w.length > 1 ? "¡Empate!" : "¡Gana " + esc(w[0].n) + "!"}</h1><p class="sub">Puntuación final</p><div class="card">${r.map((x, k) => `<div class="rank"><span>${k + 1}. <span class="dot" style="--c:${COL[x.i]}"></span>${esc(x.n)}</span><b>${x.s} pts</b></div>`).join("")}</div>
+      <div class="row"><button class="main" id="again">Jugar otra vez</button><button id="back">Cambiar ajustes</button></div>`;
+             $("again").onclick = start;
+             $("back").onclick = setup;
+           }
+           setup();
+    </script>
+  </body>
+</html>
