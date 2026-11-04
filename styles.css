@@ -286,3 +286,24 @@ a {
 .vcover.off {
   display: none;
 }
+/* Botón para abandonar la partida: fijo abajo a la derecha, solo visible durante una partida */
+.quit {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 10;
+  display: none;
+  /* Rojo fijo (no var(--bad)) para que el texto blanco se lea bien también en modo oscuro */
+  background: #c92a2a;
+  border-color: #c92a2a;
+  color: #fff;
+  font-weight: 700;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+body.ingame .quit {
+  display: block;
+}
+/* Espacio extra abajo para que el botón no tape el contenido */
+body.ingame main {
+  padding-bottom: 90px;
+}

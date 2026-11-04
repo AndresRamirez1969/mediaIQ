@@ -11,6 +11,7 @@
   </head>
   <body>
     <main id="app"></main>
+    <button class="quit" id="quit" type="button">Abandonar</button>
     <script type="module">
       import { CATS, GEN_ES } from "./js/pools/music.js";
       import { MCATS, MOVIES } from "./js/pools/movies.js";
@@ -172,6 +173,7 @@
 
       function setup() {
         stop();
+        document.body.classList.remove("ingame");
         const mv = MOV_MODE();
         if (mv && cfg.clip < 10) cfg.clip = 10;
         app.innerHTML = `<h1>${mv ? "🎬 Duelo de Cine" : "🎧 Duelo Musical"}</h1>
@@ -236,6 +238,7 @@
           used: names.map(() => []),
           pool: {},
         };
+        document.body.classList.add("ingame");
         newTurn();
         play();
       }
@@ -260,7 +263,8 @@
           .forEach((b) => (b.onclick = () => choose(b.dataset.k)));
       }
       async function choose(cat) {
-        const pl = G.turn % cfg.n;
+        const game = G,
+          pl = G.turn % cfg.n;
         app.innerHTML = `<h1>Cargando ${esc(cats()[cat].n)}…</h1><p class="sub" id="movstatus">${MOV_MODE() ? "Buscando una escena en YouTube." : "Buscando fragmentos en el catálogo de Apple Music."}</p>`;
         try {
           if (MOV_MODE()) {
@@ -269,6 +273,7 @@
             movStatus("Preparando el reproductor…");
             await loadYT();
             await ensurePlayer(playerEvents);
+            if (G !== game) return; // se abandonó mientras cargaba
             cueScene(G.song);
           } else {
             if (!G.pool[cat] || !G.pool[cat].length)
@@ -276,11 +281,13 @@
             G.song = G.pool[cat].shift();
             await refineYear(G.song);
           }
+          if (G !== game) return; // se abandonó mientras cargaba
           G.catName = cats()[cat].n;
           G.catKey = cat;
           G.used[pl].push(cat);
           play();
         } catch (e) {
+          if (G !== game) return;
           app.innerHTML = `<h1>No se pudo cargar ${MOV_MODE() ? "la película" : "las canciones"}</h1><p class="sub">${MOV_MODE() ? "" : "Revisa tu conexión a internet y vuelve a intentarlo. "}(${esc(e.message)})</p><div class="row"><button class="main" id="r">Reintentar</button><button id="b">Elegir otro género</button></div>`;
           $("r").onclick = () => choose(cat);
           $("b").onclick = pickScreen;
@@ -393,7 +400,8 @@
         return (cache[s.url] = o);
       }
       async function playClip() {
-        const s = G.song;
+        const s = G.song,
+          game = G;
         stop();
         G.plays++;
         if (MOV_MODE()) {
@@ -413,6 +421,7 @@
         try {
           const buf = await instBuf(s);
           if (actx.state == "suspended") await actx.resume();
+          if (G !== game) return; // se abandonó mientras se quitaba la voz
           srcN = actx.createBufferSource();
           srcN.buffer = buf;
           srcN.connect(actx.destination);
@@ -424,6 +433,7 @@
             if (actx.currentTime - t0 >= cfg.clip) done();
           }, 100);
         } catch (err) {
+          if (G !== game) return;
           G.inst = false;
           G.ok = false;
           G.msg =
@@ -555,6 +565,7 @@
       }
       function end() {
         stop();
+        document.body.classList.remove("ingame");
         const r = G.names
             .map((n, i) => ({ n, s: G.scores[i], i }))
             .sort((a, b) => b.s - a.s),
@@ -564,6 +575,14 @@
         $("again").onclick = start;
         $("back").onclick = setup;
       }
+      // Abandonar la partida: detiene todo y vuelve a los ajustes
+      $("quit").onclick = () => {
+        if (!G) return;
+        if (!confirm("¿Abandonar la partida? Se perderán los puntos.")) return;
+        stop();
+        G = null;
+        setup();
+      };
       setup();
     </script>
   </body>
