@@ -52,21 +52,42 @@ function jsonp(url) {
   });
 }
 
+// Proxy en Cloudflare (código en worker/itunes-proxy.js). En iPhone, Apple suele redirigir la
+// búsqueda a la app de Música y el navegador no puede seguirla; el proxy evita eso.
+// Vacío = no se usa el proxy.
+const ITUNES_PROXY = "https://mediaiq-itunes.andres-ramirezdea.workers.dev";
+
+// GET de un JSON con tiempo máximo de espera
+async function getJSON(url, ms = 8000) {
+  const c = new AbortController(),
+    t = setTimeout(() => c.abort(), ms);
+  try {
+    const r = await fetch(url, { signal: c.signal });
+    if (!r.ok) throw new Error("http " + r.status);
+    return await r.json();
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 export async function itunes(
   term,
   extra = "&media=music&entity=song&attribute=artistTerm&limit=50",
 ) {
-  const url = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}${extra}`;
+  const query = `/search?term=${encodeURIComponent(term)}${extra}`,
+    url = "https://itunes.apple.com" + query;
+  // 1) Apple directo. En iPhone suele fallar al instante (redirección a la app de Música).
   try {
-    const c = new AbortController(),
-      t = setTimeout(() => c.abort(), 8000);
-    const r = await fetch(url, { signal: c.signal });
-    clearTimeout(t);
-    if (!r.ok) throw new Error("http " + r.status);
-    return (await r.json()).results || [];
-  } catch (e) {
-    return (await jsonp(url)).results || [];
+    return (await getJSON(url)).results || [];
+  } catch (e) {}
+  // 2) Proxy: solo se usa cuando falla lo directo, así no se gasta su cupo con desktop/Android
+  if (ITUNES_PROXY) {
+    try {
+      return (await getJSON(ITUNES_PROXY + query)).results || [];
+    } catch (e) {}
   }
+  // 3) JSONP como último recurso
+  return (await jsonp(url)).results || [];
 }
 
 // Carga una lista mezclada de canciones de 6 artistas al azar de la categoría
