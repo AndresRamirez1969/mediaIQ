@@ -1,5 +1,6 @@
 // Búsqueda de canciones en el catálogo de iTunes / Apple Music
 import { CATS, YEAR_FIX } from "./pools/music.js";
+import { ARTIST_IDS } from "./pools/artist-ids.js";
 import { norm, shuffle, sleep } from "./utils.js";
 
 // Quita lo que va entre paréntesis/corchetes y lo que sigue a " - " (ej. "Song (Remastered) - Live")
@@ -52,11 +53,6 @@ function jsonp(url) {
   });
 }
 
-// Proxy en Cloudflare (código en worker/itunes-proxy.js). En iPhone, Apple suele redirigir la
-// búsqueda a la app de Música y el navegador no puede seguirla; el proxy evita eso.
-// Vacío = no se usa el proxy.
-const ITUNES_PROXY = "https://mediaiq-itunes.andres-ramirezdea.workers.dev";
-
 // GET de un JSON con tiempo máximo de espera
 async function getJSON(url, ms = 8000) {
   const c = new AbortController(),
@@ -74,20 +70,30 @@ export async function itunes(
   term,
   extra = "&media=music&entity=song&attribute=artistTerm&limit=50",
 ) {
-  const query = `/search?term=${encodeURIComponent(term)}${extra}`,
-    url = "https://itunes.apple.com" + query;
-  // 1) Apple directo. En iPhone suele fallar al instante (redirección a la app de Música).
+  const url = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}${extra}`;
+  // En iPhone, /search suele fallar (Apple redirige a la app de Música); por eso las canciones
+  // de cada artista se piden con /lookup (ver artistSongs) y esto queda como respaldo.
   try {
     return (await getJSON(url)).results || [];
-  } catch (e) {}
-  // 2) Proxy: solo se usa cuando falla lo directo, así no se gasta su cupo con desktop/Android
-  if (ITUNES_PROXY) {
-    try {
-      return (await getJSON(ITUNES_PROXY + query)).results || [];
-    } catch (e) {}
+  } catch (e) {
+    return (await jsonp(url)).results || []; // JSONP como último recurso
   }
-  // 3) JSONP como último recurso
-  return (await jsonp(url)).results || [];
+}
+
+// Canciones de un artista. Si conocemos su ID de Apple se usa /lookup, que (a diferencia de /search)
+// no redirige a los iPhone a la app de Música y además devuelve sus canciones más populares.
+async function artistSongs(name) {
+  const id = ARTIST_IDS[name];
+  if (id) {
+    try {
+      return (
+        await getJSON(
+          `https://itunes.apple.com/lookup?id=${id}&entity=song&limit=50`,
+        )
+      ).results || [];
+    } catch (e) {} // si falla, se intenta con la búsqueda normal
+  }
+  return itunes(name);
 }
 
 // Carga una lista mezclada de canciones de 6 artistas al azar de la categoría
@@ -99,7 +105,7 @@ export async function loadCat(cat) {
   const results = await Promise.allSettled(
     arts.map((a, i) =>
       sleep(i * 350)
-        .then(() => itunes(a))
+        .then(() => artistSongs(a))
         .then((r) => ({ a, r }))
         .catch((e) => {
           fails++;
